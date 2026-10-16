@@ -1,0 +1,9 @@
+const int decimal_value = 27;
+const int octal_value = 075;
+const int hex_value = 0x2A;
+float ratio = 3.125;
+float small = .5e-2;
+float hex_ratio = 0x1.8p+1;
+if (decimal_value == 27 && hex_value >= 0x20) {
+    ratio = ratio + small;
+}
