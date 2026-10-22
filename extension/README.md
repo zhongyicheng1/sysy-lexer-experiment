@@ -35,3 +35,14 @@ automata::Dfa dfa = automata::nfaToDfa(nfa);
 ```
 
 `Dfa` exposes `start`, `accepting`, `nfa_states`, and `transitions`. A missing `(state, character)` transition means rejection for that input step. Define `AUTOMATA_NO_MAIN` when compiling `automata.cpp` as a library with another program's `main`.
+
+## DFA minimization and simulation
+
+`dfa.cpp` is a standalone demo (no dependency on `automata.*`):
+
+```bash
+g++ -std=c++17 -Wall -Wextra -pedantic extension/dfa.cpp -o extension/dfa
+./extension/dfa
+```
+
+`minimize_dfa` performs Moore partition refinement on the reachable sub-automaton; `simulate_dfa` runs the resulting table. The `main` builds an `ab*` automaton and checks that every sample string is accepted before and after minimization by the same truth value.
