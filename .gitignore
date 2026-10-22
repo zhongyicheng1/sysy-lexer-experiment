@@ -1,3 +1,4 @@
 lexer
 lexer.c
 extension/automata
+extension/dfa
