@@ -1,6 +1,6 @@
 # SysY lexer experiment
 
-This repository contains a Flex-based SysY lexer and an optional regex-to-automata extension.
+This repository contains a Flex-based SysY lexer and a complete regex-to-automata extension.
 
 ## Basic lexer
 
@@ -21,4 +21,8 @@ Identifiers are interned in the symbol table and carry a `sym_index`; lexical er
 
 ## Automata extension
 
-See [extension/README.md](extension/README.md) for regex syntax, build instructions, and the NFA/DFA interface.
+See [extension/README.md](extension/README.md) for the integrated regex, NFA, DFA, minimization, and simulation workflow.
+
+## AI usage
+
+The required AI assistance record is in [AI_Usage_Log.md](AI_Usage_Log.md).

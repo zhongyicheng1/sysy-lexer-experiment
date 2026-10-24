@@ -1,4 +1,5 @@
 #include "automata.hpp"
+#include "dfa.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -334,9 +335,27 @@ int main(int argc, char** argv) {
         }
         automata::Nfa nfa = automata::regexToNfa(regex);
         automata::Dfa dfa = automata::nfaToDfa(nfa);
+        automata::Dfa minimized = automata::minimizeDfa(dfa);
         automata::printNfa(nfa);
-        std::cout << '\n';
+        std::cout << "\nDFA before minimization:\n";
         automata::printDfa(dfa);
+        std::cout << "\nDFA after minimization:\n";
+        automata::printDfa(minimized);
+
+        if (argc > 2) {
+            std::cout << "\nSimulation results:\n";
+            for (int i = 2; i < argc; ++i) {
+                bool before = automata::simulateDfa(dfa, argv[i]);
+                bool after = automata::simulateDfa(minimized, argv[i]);
+                if (before != after) {
+                    throw std::runtime_error("minimization changed the recognized language");
+                }
+                std::cout << "  \"" << argv[i] << "\": "
+                          << (after ? "accept" : "reject") << '\n';
+            }
+        } else {
+            std::cout << "\nPass test strings after the regular expression to simulate the DFA.\n";
+        }
     } catch (const std::exception& error) {
         std::cerr << "Regex error: " << error.what() << '\n';
         return 1;

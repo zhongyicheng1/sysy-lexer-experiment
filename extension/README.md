@@ -1,48 +1,39 @@
-# Regex to NFA to DFA
+# Lex algorithm extension
 
-This extension implements the part assigned to Zhong Yicheng: parse a regular expression, build a Thompson NFA, and convert it to a DFA with epsilon-closure and subset construction. DFA minimization and input simulation are left for the next module.
+This directory demonstrates the complete automata pipeline:
 
-## Supported syntax
+```text
+regular expression -> NFA -> DFA -> minimized DFA -> string simulation
+```
 
-- Literals, including escaped metacharacters such as `\|` and `\*`
-- Concatenation by writing expressions next to each other
-- Alternation: `a|b`
-- Repetition: `*`, `+`, and `?`
-- Parentheses: `(ab|c)*`
-- Character classes and ranges: `[a-zA-Z_]`
-- Escapes: `\n`, `\r`, `\t`, or a backslash before a literal character
+## Supported regular expressions
 
-Negated character classes are not supported. A period is a literal period.
+- Literal characters and escapes such as `\|`, `\*`, `\n`, `\r`, and `\t`
+- Concatenation, alternation (`|`), repetition (`*`, `+`, `?`), and parentheses
+- Character classes and ranges such as `[a-zA-Z_]`
+
+Negated character classes are not supported. A period is treated as a literal period.
 
 ## Build and run
 
 From the repository root:
 
 ```bash
-g++ -std=c++17 -Wall -Wextra -pedantic extension/automata.cpp -o extension/automata
-./extension/automata '(a|b)*abb'
+g++ -std=c++17 -Wall -Wextra -pedantic \
+  extension/automata.cpp extension/dfa.cpp -o extension/automata
+
+./extension/automata '(a|b)*abb' abb aabb ab aba b
 ```
 
-The program prints the NFA edge list followed by the DFA states and transition table. Each DFA state's `nfa_states` set records its subset-construction origin.
+The program prints the Thompson NFA, the DFA produced by subset construction, the minimized DFA, and the acceptance result for every supplied string. It also checks that minimization does not change each result.
 
-## Interface for the next module
+## Module interfaces
 
-Include `automata.hpp` and use:
+`automata.hpp` provides regular-expression parsing, NFA construction, and subset construction. `dfa.hpp` provides:
 
 ```cpp
-automata::Nfa nfa = automata::regexToNfa("(a|b)*abb");
-automata::Dfa dfa = automata::nfaToDfa(nfa);
+automata::Dfa minimized = automata::minimizeDfa(dfa);
+bool accepted = automata::simulateDfa(minimized, input);
 ```
 
-`Dfa` exposes `start`, `accepting`, `nfa_states`, and `transitions`. A missing `(state, character)` transition means rejection for that input step. Define `AUTOMATA_NO_MAIN` when compiling `automata.cpp` as a library with another program's `main`.
-
-## DFA minimization and simulation
-
-`dfa.cpp` is a standalone demo (no dependency on `automata.*`):
-
-```bash
-g++ -std=c++17 -Wall -Wextra -pedantic extension/dfa.cpp -o extension/dfa
-./extension/dfa
-```
-
-`minimize_dfa` performs Moore partition refinement on the reachable sub-automaton; `simulate_dfa` runs the resulting table. The `main` builds an `ab*` automaton and checks that every sample string is accepted before and after minimization by the same truth value.
+Both stages use the same `automata::Dfa` structure, so the minimized and simulated automaton is the DFA generated from the input regular expression rather than a separately hard-coded example.
