@@ -313,11 +313,15 @@ PARAM_DECLARATOR:
         Entry* entry = Entry::getEntry($2);
         $$ = new ParamDeclarator($1, entry, dim, @1.begin.line, @1.begin.column);
     }
-    | TYPE IDENT LBRACKET INT_CONST RBRACKET {
-        std::vector<ExprNode*>* dim = new std::vector<ExprNode*>();
-        dim->emplace_back(new LiteralExpr($4, @4.begin.line, @4.begin.column));
+    | TYPE IDENT LBRACKET RBRACKET ARRAY_DIMENSION_EXPR_LIST {
+        std::vector<ExprNode*>* dim = $5;
+        dim->insert(dim->begin(), new LiteralExpr(-1, @3.begin.line, @3.begin.column));
         Entry* entry = Entry::getEntry($2);
         $$ = new ParamDeclarator($1, entry, dim, @1.begin.line, @1.begin.column);
+    }
+    | TYPE IDENT ARRAY_DIMENSION_EXPR_LIST {
+        Entry* entry = Entry::getEntry($2);
+        $$ = new ParamDeclarator($1, entry, $3, @1.begin.line, @1.begin.column);
     }
     //TODO(Lab2)：考虑函数形参更多情况
     ;
