@@ -7,6 +7,7 @@
 #include <frontend/ast/expr.h>
 #include <frontend/ast/stmt.h>
 #include <frontend/symbol/symbol_table.h>
+#include <string>
 #include <vector>
 
 namespace FE::AST
@@ -50,6 +51,9 @@ namespace FE::AST
 
         size_t loopDepth;
 
+        bool           inFunction;
+        FuncDeclStmt*  curFunc;
+
       public:
         std::vector<std::string> errors;
 
@@ -61,6 +65,8 @@ namespace FE::AST
               funcHasReturn(false),
               curFuncRetType(voidType),
               loopDepth(0),
+              inFunction(false),
+              curFunc(nullptr),
               errors()
         {
             libFuncRegister();
@@ -127,6 +133,36 @@ namespace FE::AST
         // 该函数向符号表中注册 SysY 的库函数，以便在语义检查时获取它们的信息
         // 示例实现已提供，展示如何创建函数声明并加入 funcDecls
         void libFuncRegister();
+
+      private:
+        // 错误上报：统一写入 errors，格式为 "line N: message"
+        void reportError(const Node& node, const std::string& message);
+        void reportError(int line, const std::string& message);
+
+        // 符号管理
+        bool              addVariable(Entry* entry, VarAttr& attr, const Node& node);
+        VarAttr*          findVariable(Entry* entry);
+        FuncDeclStmt*     findFunction(Entry* entry);
+
+        // 类型判断
+        bool isVoidType(Type* type);
+        bool isScalarType(Type* type);
+        bool isIntegerType(Type* type);
+        bool isNumericType(Type* type);
+        bool isPointerType(Type* type);
+        Type* pointerElementType(Type* type);
+
+        // 声明/初始化器检查（在 decl_checker.cpp 中实现）
+        bool checkInitializer(InitDecl* init, Type* baseType, const std::vector<int>& dims, size_t depth,
+            size_t baseIndex, bool requireConst, bool isGlobal, std::vector<VarValue>& initList, bool& ok);
+        bool checkScalarInitializer(InitDecl* init, Type* baseType, size_t index, bool requireConst, bool isGlobal,
+            std::vector<VarValue>& initList, bool& ok);
+
+        // 表达式/语句检查辅助（分别在 expr_checker.cpp / stmt_checker.cpp 中实现）
+        bool checkAssignableType(Type* lhsType, Type* rhsType, const Node& node);
+        bool checkCondition(ExprNode& expr);
+        bool checkReturnType(Type* actual, Type* expected, const Node& node);
+        bool checkCallArgs(CallExpr& node, FuncDeclStmt& func);
 
       private:
         // 这两个辅助函数用于对一元/二元表达式做类型推断与常量折叠（若可能）
