@@ -1,0 +1,2 @@
+int invalid_octal = 089;
+int invalid_symbol = 4 @ 2;
