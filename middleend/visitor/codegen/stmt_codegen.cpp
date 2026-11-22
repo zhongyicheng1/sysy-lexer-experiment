@@ -2,82 +2,186 @@
 
 namespace ME
 {
+    bool ASTCodeGen::terminated() const
+    {
+        if (curBlock->insts.empty()) return false;
+        auto op = curBlock->insts.back()->opcode;
+        return op == Operator::RET || op == Operator::BR_COND || op == Operator::BR_UNCOND;
+    }
+
+    size_t ASTCodeGen::castReg(DataType from, DataType to, size_t reg)
+    {
+        if (from == to) return reg;
+        for (auto* inst : createTypeConvertInst(from, to, reg)) insert(inst);
+        return getMaxReg();
+    }
+
     void ASTCodeGen::visit(FE::AST::ExprStmt& node, Module* m)
     {
-        if (!node.expr) return;
-        apply(*this, *node.expr, m);
+        if (node.expr) apply(*this, *node.expr, m);
     }
 
     void ASTCodeGen::visit(FE::AST::FuncDeclStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成函数定义 IR（形参、入口/结束基本块、返回补丁）
-        // 设置函数返回类型与参数寄存器，创建基本块骨架，并生成函数体
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement FuncDeclStmt IR generation");
+        auto ret = convert(node.retType);
+        auto* def = new FuncDefInst(ret, node.entry->getName());
+        auto* func = new Function(def);
+        m->functions.push_back(func);
+        enterFunc(func);
+        enterBlock(createBlock());
+        name2reg.enterScope();
+        reg2attr.clear();
+        paramPtrTab.clear();
+        lval2ptr.clear();
+
+        if (node.params)
+        {
+            size_t index = 0;
+            for (auto* param : *node.params)
+                def->argRegs.emplace_back(convert(param->attr.val.value.type), getRegOperand(index++));
+            if (index) func->setMaxReg(index - 1);
+            index = 0;
+            for (auto* param : *node.params)
+            {
+                auto type = def->argRegs[index].first;
+                FE::AST::VarAttr attr(param->type, false, 0);
+                size_t reg = index;
+                if (type == DataType::PTR)
+                {
+                    paramPtrTab[reg] = true;
+                    for (size_t i = 1; i < param->dims->size(); ++i)
+                        attr.arrayDims.push_back((*param->dims)[i]->attr.val.getInt());
+                }
+                else
+                {
+                    reg = getNewRegId();
+                    insert(createAllocaInst(type, reg));
+                    insert(createStoreInst(type, index, getRegOperand(reg)));
+                }
+                reg2attr[reg] = attr;
+                name2reg.addSymbol(param->entry, reg);
+                ++index;
+            }
+        }
+
+        if (node.body) apply(*this, *node.body, m);
+        for (auto& [label, block] : func->blocks)
+        {
+            enterBlock(block);
+            if (terminated()) continue;
+            if (ret == DataType::VOID) insert(createRetInst());
+            else if (ret == DataType::F32) insert(createRetInst(0.0f));
+            else insert(createRetInst(0));
+        }
+        name2reg.exitScope();
+        exitBlock();
+        exitFunc();
     }
 
     void ASTCodeGen::visit(FE::AST::VarDeclStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成变量声明语句 IR（局部变量分配、初始化）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement VarDeclStmt IR generation");
+        if (node.decl) apply(*this, *node.decl, m);
     }
 
     void ASTCodeGen::visit(FE::AST::BlockStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成语句块 IR（作用域管理，顺序生成子语句）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement BlockStmt IR generation");
+        name2reg.enterScope();
+        if (node.stmts)
+            for (auto* stmt : *node.stmts)
+            {
+                if (terminated()) break;
+                if (stmt) apply(*this, *stmt, m);
+            }
+        name2reg.exitScope();
     }
 
     void ASTCodeGen::visit(FE::AST::ReturnStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成 return 语句 IR（可选返回值与类型转换）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement ReturnStmt IR generation");
+        if (!node.retExpr)
+        {
+            insert(createRetInst());
+            return;
+        }
+        apply(*this, *node.retExpr, m);
+        auto type = curFunc->funcDef->retType;
+        insert(createRetInst(type, castReg(convert(node.retExpr->attr.val.value.type), type, getMaxReg())));
     }
 
     void ASTCodeGen::visit(FE::AST::WhileStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成 while 循环 IR（条件块、循环体与结束块、循环标签）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement WhileStmt IR generation");
+        auto* cond = createBlock();
+        auto* body = createBlock();
+        auto* end = createBlock();
+        insert(createBranchInst(cond->blockId));
+        enterBlock(cond);
+        apply(*this, *node.cond, m);
+        auto test = castReg(convert(node.cond->attr.val.value.type), DataType::I1, getMaxReg());
+        insert(createBranchInst(test, body->blockId, end->blockId));
+        enterBlock(body);
+        loopTargets.emplace_back(cond->blockId, end->blockId);
+        if (node.body) apply(*this, *node.body, m);
+        loopTargets.pop_back();
+        if (!terminated()) insert(createBranchInst(cond->blockId));
+        enterBlock(end);
     }
 
     void ASTCodeGen::visit(FE::AST::IfStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成 if/else IR（then/else/end 基本块与条件分支）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement IfStmt IR generation");
+        apply(*this, *node.cond, m);
+        auto test = castReg(convert(node.cond->attr.val.value.type), DataType::I1, getMaxReg());
+        auto* yes = createBlock();
+        auto* no = node.elseStmt ? createBlock() : nullptr;
+        auto* end = createBlock();
+        insert(createBranchInst(test, yes->blockId, no ? no->blockId : end->blockId));
+        enterBlock(yes);
+        if (node.thenStmt) apply(*this, *node.thenStmt, m);
+        if (!terminated()) insert(createBranchInst(end->blockId));
+        if (no)
+        {
+            enterBlock(no);
+            apply(*this, *node.elseStmt, m);
+            if (!terminated()) insert(createBranchInst(end->blockId));
+        }
+        enterBlock(end);
     }
 
-    void ASTCodeGen::visit(FE::AST::BreakStmt& node, Module* m)
+    void ASTCodeGen::visit(FE::AST::BreakStmt&, Module*)
     {
-        // TODO(Lab 3-2): 生成 break 的无条件跳转至循环结束块
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement BreakStmt IR generation");
+        insert(createBranchInst(loopTargets.back().second));
     }
 
-    void ASTCodeGen::visit(FE::AST::ContinueStmt& node, Module* m)
+    void ASTCodeGen::visit(FE::AST::ContinueStmt&, Module*)
     {
-        // TODO(Lab 3-2): 生成 continue 的无条件跳转至循环步进/条件块
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement ContinueStmt IR generation");
+        insert(createBranchInst(loopTargets.back().first));
     }
 
     void ASTCodeGen::visit(FE::AST::ForStmt& node, Module* m)
     {
-        // TODO(Lab 3-2): 生成 for 循环 IR（init/cond/body/step 基本块与循环标签）
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement ForStmt IR generation");
+        name2reg.enterScope();
+        if (node.init) apply(*this, *node.init, m);
+        auto* cond = createBlock();
+        auto* body = createBlock();
+        auto* step = createBlock();
+        auto* end = createBlock();
+        insert(createBranchInst(cond->blockId));
+        enterBlock(cond);
+        if (node.cond)
+        {
+            apply(*this, *node.cond, m);
+            auto test = castReg(convert(node.cond->attr.val.value.type), DataType::I1, getMaxReg());
+            insert(createBranchInst(test, body->blockId, end->blockId));
+        }
+        else insert(createBranchInst(body->blockId));
+
+        enterBlock(body);
+        loopTargets.emplace_back(step->blockId, end->blockId);
+        if (node.body) apply(*this, *node.body, m);
+        loopTargets.pop_back();
+        if (!terminated()) insert(createBranchInst(step->blockId));
+        enterBlock(step);
+        if (node.step) apply(*this, *node.step, m);
+        insert(createBranchInst(cond->blockId));
+        enterBlock(end);
+        name2reg.exitScope();
     }
 }  // namespace ME

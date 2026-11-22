@@ -3,6 +3,7 @@
 
 #include <frontend/symbol/isymbol_table.h>
 #include <map>
+#include <vector>
 
 namespace FE::Sym
 {
@@ -10,6 +11,15 @@ namespace FE::Sym
     {
         friend iSymTable<SymTable>;
 
+      private:
+        // 作用域栈：scopes[0] 为全局作用域，back() 为当前作用域。
+        // 每个作用域独立保存符号，查找时从内向外进行，从而支持遮蔽。
+        std::vector<std::map<Entry*, FE::AST::VarAttr>> scopes;
+
+      public:
+        SymTable() { reset_impl(); }
+
+      private:
         void reset_impl();
 
         void              addSymbol_impl(Entry* entry, FE::AST::VarAttr& attr);

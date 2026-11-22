@@ -49,6 +49,10 @@ namespace ME
         const std::map<FE::Sym::Entry*, FE::AST::FuncDeclStmt*>& funcDecls;
         Function*                                                curFunc;
         Block*                                                   curBlock;
+        std::vector<std::pair<size_t, size_t>> loopTargets;
+        bool terminated() const;
+        size_t castReg(DataType from, DataType to, size_t reg);
+        size_t logical(FE::AST::ExprNode& lhs, FE::AST::ExprNode& rhs, bool isAnd, Module* m);
         class RegTab
         {
           public:

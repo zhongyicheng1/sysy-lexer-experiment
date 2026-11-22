@@ -51,9 +51,25 @@ namespace ME
     void ASTCodeGen::handleGlobalVarDecl(FE::AST::VarDeclStmt* decls, Module* m)
     {
         // TODO(Lab 3-2): 生成全局变量声明 IR（支持标量与数组的初值）
-        (void)decls;
-        (void)m;
-        TODO("Lab3-2: Implement global var declaration IR generation");
+        if (!decls->decl || !decls->decl->decls) return;
+        for (auto* declarator : *decls->decl->decls)
+        {
+            auto* lvalue = static_cast<FE::AST::LeftValExpr*>(declarator->lval);
+            const auto& attr = glbSymbols.at(lvalue->entry);
+            const auto type = convert(attr.type);
+            const auto& name = lvalue->entry->getName();
+            if (!attr.arrayDims.empty())
+                m->globalVars.push_back(new GlbVarDeclInst(type, name, attr));
+            else
+            {
+                Operand* initial = nullptr;
+                if (!attr.initList.empty())
+                    initial = type == DataType::F32
+                        ? static_cast<Operand*>(getImmeF32Operand(attr.initList.front().getFloat()))
+                        : static_cast<Operand*>(getImmeI32Operand(attr.initList.front().getInt()));
+                m->globalVars.push_back(new GlbVarDeclInst(type, name, initial));
+            }
+        }
     }
 
     void ASTCodeGen::visit(FE::AST::Root& node, Module* m)
@@ -63,9 +79,14 @@ namespace ME
 
         // TODO(Lab 3-2): 生成模块级 IR
         // 处理顶层语句：全局变量声明、函数定义等
-        (void)node;
-        (void)m;
-        TODO("Lab3-2: Implement Root IR generation");
+        if (!node.getStmts()) return;
+        for (auto* stmt : *node.getStmts())
+        {
+            if (auto* global = dynamic_cast<FE::AST::VarDeclStmt*>(stmt))
+                handleGlobalVarDecl(global, m);
+            else if (stmt)
+                apply(*this, *stmt, m);
+        }
     }
 
     LoadInst* ASTCodeGen::createLoadInst(DataType t, Operand* ptr, size_t resReg)

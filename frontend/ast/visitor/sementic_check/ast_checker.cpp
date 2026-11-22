@@ -5,10 +5,203 @@ namespace FE::AST
 {
     bool ASTChecker::visit(Root& node)
     {
-        // TODO(Lab3-1): 实现根节点的语义检查
-        // 重置符号表，遍历所有顶层语句进行检查，确保存在main函数
-        (void)node;
-        TODO("Lab3-1: Implement Root node semantic checking");
+        // 每次检查根节点都从干净的全局作用域开始
+        symTable.reset();
+        glbSymbols.clear();
+        errors.clear();
+
+        mainExists     = false;
+        funcHasReturn  = false;
+        curFuncRetType = voidType;
+        loopDepth      = 0;
+        inFunction     = false;
+        curFunc        = nullptr;
+
+        std::vector<StmtNode*>* stmts = node.getStmts();
+        if (!stmts || stmts->empty())
+        {
+            reportError(node, "empty program");
+            return false;
+        }
+
+        bool ok = true;
+
+        // 第一遍：预注册所有函数签名，支持前向调用和递归调用
+        for (auto* stmt : *stmts)
+        {
+            if (!stmt) continue;
+
+            auto* func = dynamic_cast<FuncDeclStmt*>(stmt);
+            if (!func) continue;
+
+            if (!func->entry)
+            {
+                reportError(*func, "function has no symbol entry");
+                ok = false;
+                continue;
+            }
+
+            const std::string& name = func->entry->getName();
+            if (name == "main") mainExists = true;
+
+            auto existing = funcDecls.find(func->entry);
+            if (existing != funcDecls.end() && existing->second != func)
+            {
+                reportError(*func, "redefinition of function '" + name + "'");
+                ok = false;
+                continue;
+            }
+
+            funcDecls[func->entry] = func;
+        }
+
+        // 第二遍：按源码顺序检查顶层声明。全局作用域只允许变量声明和函数定义。
+        for (auto* stmt : *stmts)
+        {
+            if (!stmt) continue;
+
+            if (auto* varDecl = dynamic_cast<VarDeclStmt*>(stmt))
+            {
+                ok = apply(*this, *varDecl) && ok;
+                continue;
+            }
+
+            if (auto* func = dynamic_cast<FuncDeclStmt*>(stmt))
+            {
+                auto existing = funcDecls.find(func->entry);
+                if (existing != funcDecls.end() && existing->second == func)
+                    ok = apply(*this, *func) && ok;
+                continue;
+            }
+
+            reportError(*stmt, "ordinary statements are not allowed at global scope");
+            ok = false;
+        }
+
+        // main 必须存在，且必须是 int main()
+        if (!mainExists)
+        {
+            reportError(1, "main function is not defined");
+            ok = false;
+        }
+        else
+        {
+            auto mainIt = funcDecls.find(Entry::getEntry("main"));
+            if (mainIt != funcDecls.end() && mainIt->second)
+            {
+                FuncDeclStmt* mainFunc = mainIt->second;
+                if (!mainFunc->retType || mainFunc->retType->getBaseType() != Type_t::INT ||
+                    mainFunc->retType->getTypeGroup() != TypeGroup::BASIC)
+                {
+                    reportError(*mainFunc, "main function must return int");
+                    ok = false;
+                }
+                if (mainFunc->params && !mainFunc->params->empty())
+                {
+                    reportError(*mainFunc, "main function must not have parameters");
+                    ok = false;
+                }
+            }
+        }
+
+        return ok && errors.empty();
+    }
+
+    void ASTChecker::reportError(const Node& node, const std::string& message)
+    {
+        reportError(node.line_num, message);
+    }
+
+    void ASTChecker::reportError(int line, const std::string& message)
+    {
+        if (line < 0) line = 1;
+        errors.push_back("line " + std::to_string(line) + ": " + message);
+    }
+
+    bool ASTChecker::addVariable(Entry* entry, VarAttr& attr, const Node& node)
+    {
+        if (!entry)
+        {
+            reportError(node, "null variable symbol");
+            return false;
+        }
+
+        const std::string& name = entry->getName();
+
+        if (symTable.isGlobalScope() && findFunction(entry))
+        {
+            reportError(node, "'" + name + "' is already declared as a function");
+            return false;
+        }
+
+        VarAttr* old = symTable.getSymbol(entry);
+        if (old && old->scopeLevel == symTable.getScopeDepth())
+        {
+            reportError(node, "redefinition of '" + name + "'");
+            return false;
+        }
+
+        symTable.addSymbol(entry, attr);
+
+        // 全局变量同时保留在 glbSymbols 中，供成员二 codegen 使用
+        if (symTable.isGlobalScope()) glbSymbols[entry] = attr;
+
+        return true;
+    }
+
+    VarAttr* ASTChecker::findVariable(Entry* entry)
+    {
+        if (!entry) return nullptr;
+
+        VarAttr* symbol = symTable.getSymbol(entry);
+        if (symbol) return symbol;
+
+        auto it = glbSymbols.find(entry);
+        if (it != glbSymbols.end()) return &it->second;
+
+        return nullptr;
+    }
+
+    FuncDeclStmt* ASTChecker::findFunction(Entry* entry)
+    {
+        if (!entry) return nullptr;
+
+        auto it = funcDecls.find(entry);
+        return it == funcDecls.end() ? nullptr : it->second;
+    }
+
+    bool ASTChecker::isVoidType(Type* type) { return type && type->getBaseType() == Type_t::VOID; }
+
+    bool ASTChecker::isScalarType(Type* type)
+    {
+        if (!type || type->getTypeGroup() != TypeGroup::BASIC) return false;
+        Type_t base = type->getBaseType();
+        return base == Type_t::BOOL || base == Type_t::INT || base == Type_t::LL || base == Type_t::FLOAT;
+    }
+
+    bool ASTChecker::isIntegerType(Type* type)
+    {
+        if (!type || type->getTypeGroup() != TypeGroup::BASIC) return false;
+        Type_t base = type->getBaseType();
+        return base == Type_t::BOOL || base == Type_t::INT || base == Type_t::LL;
+    }
+
+    bool ASTChecker::isNumericType(Type* type)
+    {
+        if (!type || type->getTypeGroup() != TypeGroup::BASIC) return false;
+        Type_t base = type->getBaseType();
+        return base == Type_t::BOOL || base == Type_t::INT || base == Type_t::LL || base == Type_t::FLOAT;
+    }
+
+    bool ASTChecker::isPointerType(Type* type)
+    {
+        return type && type->getTypeGroup() == TypeGroup::POINTER;
+    }
+
+    Type* ASTChecker::pointerElementType(Type* type)
+    {
+        if (!isPointerType(type)) return nullptr;
+        return static_cast<PtrType*>(type)->base;
     }
 
     void ASTChecker::libFuncRegister()

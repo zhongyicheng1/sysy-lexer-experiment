@@ -221,6 +221,7 @@ namespace ME
         };
 
         apply(*this, node, m);
+        block = curBlock;
         size_t srcReg = getMaxReg();
 
         DataType srcType = convert(node.attr.val.value.type);
@@ -289,6 +290,7 @@ namespace ME
         apply(*this, lhs, m);
         size_t lhsReg = getMaxReg();
         apply(*this, rhs, m);
+        block = curBlock;
         size_t rhsReg = getMaxReg();
 
         DataType lhsType = convert(lhs.attr.val.value.type);
