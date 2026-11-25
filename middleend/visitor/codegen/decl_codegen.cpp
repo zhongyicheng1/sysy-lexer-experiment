@@ -34,6 +34,7 @@ namespace ME
         {
             auto& lhs = static_cast<FE::AST::LeftValExpr&>(*declarator->lval);
             FE::AST::VarAttr attr(node.type, node.isConstDecl, 0);
+            attr.isTensor = node.type && node.type->getTypeGroup() == FE::AST::TypeGroup::TENSOR;
             if (lhs.indices)
                 for (auto* dim : *lhs.indices) attr.arrayDims.push_back(dim->attr.val.getInt());
             auto reg = getNewRegId();
@@ -62,6 +63,17 @@ namespace ME
                 CallInst::argList args{{DataType::PTR, address}, {DataType::I8, getImmeI32Operand(0)},
                     {DataType::I32, getImmeI32Operand(stride.front() * 4)}, {DataType::I1, getImmeI32Operand(0)}};
                 insert(createCallInst(DataType::VOID, "llvm.memset.p0.i32", args));
+            }
+
+            // 张量允许用同形状的张量表达式初始化，例如 tensor int c[4] = a + b;
+            if (attr.isTensor && dynamic_cast<FE::AST::Initializer*>(declarator->init))
+            {
+                auto* single = static_cast<FE::AST::Initializer*>(declarator->init);
+                apply(*this, *single->init_val, m);
+                auto it = tensorVals.find(single->init_val);
+                ASSERT(it != tensorVals.end() && "tensor initializer has no storage");
+                emitTensorCopy(address, false, it->second, false, type, dims);
+                continue;
             }
             std::function<void(FE::AST::InitDecl*, size_t, size_t)> emitInit;
             emitInit = [&](FE::AST::InitDecl* init, size_t depth, size_t start) {

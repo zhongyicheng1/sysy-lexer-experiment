@@ -85,8 +85,17 @@ namespace FE::AST
         }
 
         bool     ok   = true;
+        bool     isTensor = isTensorType(node.type);
         VarAttr  attr(node.type, false, 0);
         Type*    exprType = node.type;
+
+        attr.isTensor = isTensor;
+
+        if (isTensor && (!node.dims || node.dims->empty()))
+        {
+            reportError(node, "tensor parameter '" + node.entry->getName() + "' must declare its shape");
+            ok = false;
+        }
 
         if (node.dims && !node.dims->empty())
         {
@@ -124,6 +133,11 @@ namespace FE::AST
                         reportError(*dim, "invalid array parameter dimension");
                         ok = false;
                     }
+                    if (isTensor && value != -1)
+                    {
+                        reportError(*dim, "the first dimension of a tensor parameter must be empty ('[]')");
+                        ok = false;
+                    }
                     continue;
                 }
 
@@ -136,10 +150,21 @@ namespace FE::AST
                 tailDims.push_back(value);
             }
 
-            // 数组形参退化为指向元素的指针
-            attr.type      = TypeFactory::getPtrType(node.type);
-            attr.arrayDims = tailDims;
-            exprType       = attr.type;
+            if (isTensor)
+            {
+                // 张量形参：首维未知，其余维度保留在 arrayDims 中
+                attr.arrayDims     = tailDims;
+                attr.type          = node.type;
+                attr.isTensorParam = true;
+                exprType           = node.type;
+            }
+            else
+            {
+                // 数组形参退化为指向元素的指针
+                attr.type      = TypeFactory::getPtrType(node.type);
+                attr.arrayDims = tailDims;
+                exprType       = attr.type;
+            }
         }
 
         node.attr.val.value.type = exprType;
@@ -182,6 +207,8 @@ namespace FE::AST
 
             VarAttr attr(node.type, node.isConstDecl, 0);
             bool    dimsOk = true;
+            bool    isTensor = isTensorType(node.type);
+            attr.isTensor    = isTensor;
 
             // lval->indices 在声明中表示数组维度，而不是运行期下标
             if (lval->indices)
@@ -219,10 +246,17 @@ namespace FE::AST
                 }
             }
 
+            if (isTensor && attr.arrayDims.empty())
+            {
+                reportError(*declarator, "tensor variable '" + name + "' must declare its shape");
+                dimsOk = false;
+            }
+
             // 声明左值本身也应被标记，供后续阶段使用
             lval->isLval                = true;
             lval->attr.val.isConstexpr  = false;
-            lval->attr.val.value.type   = attr.arrayDims.empty() ? node.type : TypeFactory::getPtrType(node.type);
+            lval->attr.val.value.type   = (attr.arrayDims.empty() || isTensor) ? node.type
+                                                                               : TypeFactory::getPtrType(node.type);
 
             if (!dimsOk) ok = false;
 
@@ -244,7 +278,9 @@ namespace FE::AST
             size_t total = 1;
             for (int dim : attr.arrayDims) total *= static_cast<size_t>(dim);
 
-            std::vector<VarValue> initList(total, zeroValueOf(node.type));
+            Type* elemType = isTensor ? tensorElementType(node.type) : node.type;
+
+            std::vector<VarValue> initList(total, zeroValueOf(elemType));
             bool                  initValid = true;
 
             if (declarator->init)
@@ -252,14 +288,50 @@ namespace FE::AST
                 if (attr.arrayDims.empty())
                 {
                     checkScalarInitializer(
-                        declarator->init, node.type, 0, requireConst, isGlobal, initList, initValid);
+                        declarator->init, elemType, 0, requireConst, isGlobal, initList, initValid);
                 }
                 else
                 {
                     if (dynamic_cast<InitializerList*>(declarator->init))
                     {
-                        checkInitializer(declarator->init, node.type, attr.arrayDims, 0, 0, requireConst, isGlobal,
+                        checkInitializer(declarator->init, elemType, attr.arrayDims, 0, 0, requireConst, isGlobal,
                             initList, initValid);
+                    }
+                    else if (isTensor)
+                    {
+                        // 张量允许用同形状的张量表达式初始化，例如
+                        // tensor int c[4] = a + b * 2;
+                        auto* single = dynamic_cast<Initializer*>(declarator->init);
+                        if (!single || !single->init_val)
+                        {
+                            reportError(*declarator->init, "invalid tensor initializer");
+                            initValid = false;
+                        }
+                        else if (isGlobal)
+                        {
+                            reportError(*declarator->init,
+                                "global tensor must be initialized with a constant initializer list");
+                            initValid = false;
+                        }
+                        else if (!apply(*this, *single->init_val))
+                        {
+                            initValid = false;
+                        }
+                        else
+                        {
+                            Type* initType = single->init_val->attr.val.value.type;
+                            if (!isTensorType(initType) ||
+                                tensorElementType(initType)->getBaseType() != elemType->getBaseType())
+                            {
+                                reportError(*single->init_val, "tensor initializer type does not match");
+                                initValid = false;
+                            }
+                            else if (!sameTensorShape(attr.arrayDims, single->init_val->tensorDims))
+                            {
+                                reportError(*single->init_val, "tensor initializer shape does not match");
+                                initValid = false;
+                            }
+                        }
                     }
                     else
                     {

@@ -68,10 +68,10 @@
 
 %token <std::string> IDENT 
 
-%token INT FLOAT VOID
+%token INT FLOAT VOID TENSOR
 %token IF ELSE FOR WHILE CONTINUE BREAK SWITCH CASE GOTO DO RETURN CONST
 %token SEMICOLON COMMA LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
-%token NOT BITOR BITAND DOT PLUS MINUS STAR SLASH MOD
+%token NOT BITOR BITAND DOT PLUS MINUS STAR SLASH MOD AT
 %token GT GE LT LE EQ ASSIGN NEQ AND OR
 %token END
 
@@ -194,7 +194,7 @@ STMT:
     | BLOCK_STMT {
         $$ = $1;
     }
-    //TODO(Lab2)：考虑更多语句类型
+
     ;
 
 CONTINUE_STMT:
@@ -270,7 +270,6 @@ IF_STMT:
     }
     ;
 
-//TODO(Lab2)：按照你补充的语句类型，实现这些语句的处理
 
 WHILE_STMT:
     WHILE LPAREN EXPR RPAREN STMT {
@@ -323,7 +322,7 @@ PARAM_DECLARATOR:
         Entry* entry = Entry::getEntry($2);
         $$ = new ParamDeclarator($1, entry, $3, @1.begin.line, @1.begin.column);
     }
-    //TODO(Lab2)：考虑函数形参更多情况
+
     ;
 
 PARAM_DECLARATOR_LIST:
@@ -338,7 +337,6 @@ PARAM_DECLARATOR_LIST:
         $$ = $1;
         $$->push_back($3);
     }
-    //TODO(Lab2)：考虑函数形参列表的构成情况
     ;
 
 VAR_DECLARATOR:
@@ -515,6 +513,9 @@ MULDIV_EXPR:
     | MULDIV_EXPR MOD UNARY_EXPR {
         $$ = new BinaryExpr(Operator::MOD, $1, $3, @2.begin.line, @2.begin.column);
     }
+    | MULDIV_EXPR AT UNARY_EXPR {
+        $$ = new BinaryExpr(Operator::MATMUL, $1, $3, @2.begin.line, @2.begin.column);
+    }
     ;
 
 UNARY_EXPR:
@@ -612,6 +613,12 @@ TYPE:
     }
     | VOID {
         $$ = voidType;
+    }
+    | TENSOR INT {
+        $$ = TypeFactory::getTensorType(intType);
+    }
+    | TENSOR FLOAT {
+        $$ = TypeFactory::getTensorType(floatType);
     }
     ;
 

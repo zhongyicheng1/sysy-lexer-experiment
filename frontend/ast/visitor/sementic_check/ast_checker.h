@@ -150,7 +150,14 @@ namespace FE::AST
         bool isIntegerType(Type* type);
         bool isNumericType(Type* type);
         bool isPointerType(Type* type);
+        bool isTensorType(Type* type);
         Type* pointerElementType(Type* type);
+        Type* tensorElementType(Type* type);
+
+        // 张量辅助
+        bool sameTensorShape(const std::vector<int>& a, const std::vector<int>& b);
+        bool checkTensorAssign(LeftValExpr& lhs, ExprNode& rhs, const Node& node);
+        void setTensorExpr(ExprNode& node, Type* elem, const std::vector<int>& dims);
 
         // 声明/初始化器检查（在 decl_checker.cpp 中实现）
         bool checkInitializer(InitDecl* init, Type* baseType, const std::vector<int>& dims, size_t depth,

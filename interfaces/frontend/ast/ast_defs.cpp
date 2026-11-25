@@ -4,6 +4,7 @@
 
 std::ostream& operator<<(std::ostream& os, FE::AST::Operator op)
 {
+    if (op == FE::AST::Operator::MATMUL) return os << "@";
     switch (op)
     {
 #define X(name, lname, idx) \
@@ -13,7 +14,6 @@ std::ostream& operator<<(std::ostream& os, FE::AST::Operator op)
         default: return os << "UNKNOWN OPERATOR";
     }
 }
-
 std::string toString(FE::AST::Operator op)
 {
     std::stringstream ss;
@@ -31,6 +31,7 @@ namespace FE::AST
 
     std::array<Type*, maxTypeIdx + 1>                        TypeFactory::baseTypes = {nullptr};
     std::map<TypeFactory::PtrBase_t, TypeFactory::PtrType_t> TypeFactory::ptrTypeMap;
+    std::map<TypeFactory::PtrBase_t, TypeFactory::PtrType_t> TypeFactory::tensorTypeMap;
 
     TypeFactory::TypeFactory()
     {
@@ -54,6 +55,13 @@ namespace FE::AST
             v = nullptr;
         }
         ptrTypeMap.clear();
+        for (auto& [k, v] : tensorTypeMap)
+        {
+            if (!v) continue;
+            delete v;
+            v = nullptr;
+        }
+        tensorTypeMap.clear();
         for (auto& t : baseTypes)
         {
             if (!t) continue;
@@ -71,6 +79,16 @@ namespace FE::AST
         Type* ptype   = new PtrType(t);
         ptrTypeMap[t] = ptype;
         return ptype;
+    }
+
+    Type* TypeFactory::getTensorType(Type* elem)
+    {
+        if (!elem) return nullptr;
+        auto it = tensorTypeMap.find(elem);
+        if (it != tensorTypeMap.end()) return it->second;
+        Type* ttype      = new TensorType(elem);
+        tensorTypeMap[elem] = ttype;
+        return ttype;
     }
 
     TypeFactory& tf = TypeFactory::getInstance();

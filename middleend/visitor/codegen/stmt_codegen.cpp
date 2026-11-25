@@ -23,7 +23,8 @@ namespace ME
 
     void ASTCodeGen::visit(FE::AST::FuncDeclStmt& node, Module* m)
     {
-        auto ret = convert(node.retType);
+        bool tensorRet = node.retType && node.retType->getTypeGroup() == FE::AST::TypeGroup::TENSOR;
+        auto ret = tensorRet ? DataType::PTR : convert(node.retType);
         auto* def = new FuncDefInst(ret, node.entry->getName());
         auto* func = new Function(def);
         m->functions.push_back(func);
@@ -38,13 +39,20 @@ namespace ME
         {
             size_t index = 0;
             for (auto* param : *node.params)
-                def->argRegs.emplace_back(convert(param->attr.val.value.type), getRegOperand(index++));
+            {
+                bool tensorParam = param->type && param->type->getTypeGroup() == FE::AST::TypeGroup::TENSOR;
+                def->argRegs.emplace_back(
+                    tensorParam ? DataType::PTR : convert(param->attr.val.value.type), getRegOperand(index++));
+            }
             if (index) func->setMaxReg(index - 1);
             index = 0;
             for (auto* param : *node.params)
             {
                 auto type = def->argRegs[index].first;
                 FE::AST::VarAttr attr(param->type, false, 0);
+                bool             tensorParam = param->type && param->type->getTypeGroup() == FE::AST::TypeGroup::TENSOR;
+                attr.isTensor                = tensorParam;
+                attr.isTensorParam           = tensorParam;
                 size_t reg = index;
                 if (type == DataType::PTR)
                 {
@@ -71,6 +79,13 @@ namespace ME
             if (terminated()) continue;
             if (ret == DataType::VOID) insert(createRetInst());
             else if (ret == DataType::F32) insert(createRetInst(0.0f));
+            else if (ret == DataType::PTR)
+            {
+                // 张量返回值：用一块哑内存的地址兜底，保证每个基本块都有终结指令
+                size_t r = getNewRegId();
+                func->getBlock(0)->insertFront(createAllocaInst(DataType::I32, r));
+                insert(new RetInst(DataType::PTR, getRegOperand(r)));
+            }
             else insert(createRetInst(0));
         }
         name2reg.exitScope();
@@ -104,6 +119,15 @@ namespace ME
         }
         apply(*this, *node.retExpr, m);
         auto type = curFunc->funcDef->retType;
+        if (type == DataType::PTR)
+        {
+            auto it = tensorVals.find(node.retExpr);
+            if (it != tensorVals.end())
+            {
+                insert(new RetInst(DataType::PTR, it->second));
+                return;
+            }
+        }
         insert(createRetInst(type, castReg(convert(node.retExpr->attr.val.value.type), type, getMaxReg())));
     }
 

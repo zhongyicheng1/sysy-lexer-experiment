@@ -14,9 +14,13 @@ namespace FE::AST
         size_t trueTar;
         size_t falseTar;
 
+        // 若该表达式的值为张量，则记录其形状；否则为空
+        std::vector<int> tensorDims;
+
       public:
         ExprNode(int line_num = -1, int col_num = -1)
-            : Node(line_num, col_num), trueTar(static_cast<size_t>(-1)), falseTar(static_cast<size_t>(-1))
+            : Node(line_num, col_num), trueTar(static_cast<size_t>(-1)), falseTar(static_cast<size_t>(-1)),
+              tensorDims()
         {}
         virtual ~ExprNode() override = default;
 

@@ -62,6 +62,41 @@ namespace FE::AST
         return true;
     }
 
+    bool ASTChecker::checkTensorAssign(LeftValExpr& lhs, ExprNode& rhs, const Node& node)
+    {
+        Type* lhsType = lhs.attr.val.value.type;
+        Type* rhsType = rhs.attr.val.value.type;
+
+        if (!isTensorType(rhsType))
+        {
+            reportError(rhs, "cannot assign a non-tensor value to tensor '" + lhs.entry->getName() + "'");
+            return false;
+        }
+        if (!isTensorType(lhsType)) return false;
+
+        Type* lhsElem = tensorElementType(lhsType);
+        Type* rhsElem = tensorElementType(rhsType);
+        if (!lhsElem || !rhsElem || lhsElem->getBaseType() != rhsElem->getBaseType())
+        {
+            reportError(node, "tensor element types do not match in assignment");
+            return false;
+        }
+        if (!sameTensorShape(lhs.tensorDims, rhs.tensorDims))
+        {
+            reportError(node, "tensor shapes do not match in assignment");
+            return false;
+        }
+        for (int d : lhs.tensorDims)
+        {
+            if (d <= 0)
+            {
+                reportError(node, "cannot assign a whole tensor whose first dimension is unknown");
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool ASTChecker::visit(LeftValExpr& node)
     {
         node.isLval                = false;
@@ -121,6 +156,53 @@ namespace FE::AST
         Type* baseType  = var->type;
         bool  isPointer = isPointerType(baseType);
         bool  isArray   = !var->arrayDims.empty();
+
+        // 张量：整体、部分下标、完整下标三种情况
+        if (var->isTensor)
+        {
+            Type* elem = tensorElementType(baseType);
+            if (!elem)
+            {
+                reportError(node, "tensor variable '" + name + "' has an invalid element type");
+                return false;
+            }
+
+            size_t rank = var->arrayDims.size() + (var->isTensorParam ? 1 : 0);
+            std::vector<int> shape;
+            if (var->isTensorParam) shape.push_back(-1);  // 形参首维未知
+            shape.insert(shape.end(), var->arrayDims.begin(), var->arrayDims.end());
+
+            if (providedIndexCount > rank)
+            {
+                reportError(node, "too many subscripts for tensor '" + name + "'");
+                ok = false;
+            }
+
+            if (!hasIndex)
+            {
+                // 整体张量：可作为赋值目标，也可参与张量运算
+                node.attr.val.value.type  = TypeFactory::getTensorType(elem);
+                node.attr.val.isConstexpr = false;
+                node.tensorDims           = shape;
+                node.isLval               = true;
+            }
+            else if (indexCount >= rank)
+            {
+                node.attr.val.value.type  = elem;
+                node.attr.val.isConstexpr = false;
+                node.tensorDims.clear();
+                node.isLval = true;
+            }
+            else
+            {
+                node.attr.val.value.type  = TypeFactory::getPtrType(elem);
+                node.attr.val.isConstexpr = false;
+                node.tensorDims.clear();
+                node.isLval = false;
+            }
+
+            return ok;
+        }
 
         Type* resultType = nullptr;
         bool  assignable = false;
@@ -271,6 +353,22 @@ namespace FE::AST
         }
 
         Type* operandType = node.expr->attr.val.value.type;
+
+        if (isTensorType(operandType))
+        {
+            if (node.op != Operator::ADD && node.op != Operator::SUB)
+            {
+                reportError(node, "operator '" + toString(node.op) + "' does not support tensor operands");
+                node.attr.val.value.type  = voidType;
+                node.attr.val.isConstexpr = false;
+                return false;
+            }
+            node.attr.val.value.type  = operandType;
+            node.attr.val.isConstexpr = false;
+            node.tensorDims           = node.expr->tensorDims;
+            return true;
+        }
+
         if (isVoidType(operandType) || !isScalarType(operandType))
         {
             reportError(node, "unary operator requires a non-void scalar operand");
@@ -334,6 +432,16 @@ namespace FE::AST
                     reportError(*node.lhs, "cannot assign to const variable '" + lhs->entry->getName() + "'");
                     ok = false;
                 }
+                if (var->isTensor && (!lhs->indices || lhs->indices->empty()))
+                {
+                    // 整体张量赋值：两侧类型与形状必须完全一致
+                    if (!checkTensorAssign(*lhs, *node.rhs, node)) ok = false;
+                    node.attr.val.value       = VarValue();
+                    node.attr.val.value.type  = lhs->attr.val.value.type;
+                    node.attr.val.isConstexpr = false;
+                    node.tensorDims           = lhs->tensorDims;
+                    return ok;
+                }
                 if (!var->arrayDims.empty() && (!lhs->indices || lhs->indices->empty()))
                 {
                     reportError(*node.lhs, "cannot assign to an array '" + lhs->entry->getName() + "'");
@@ -364,6 +472,120 @@ namespace FE::AST
 
         Type* lhsType = node.lhs->attr.val.value.type;
         Type* rhsType = node.rhs->attr.val.value.type;
+
+        bool lhsTensor = isTensorType(lhsType);
+        bool rhsTensor = isTensorType(rhsType);
+        if (lhsTensor || rhsTensor)
+        {
+            auto shapeKnown = [](const std::vector<int>& d) {
+                if (d.empty()) return false;
+                for (int x : d)
+                    if (x <= 0) return false;
+                return true;
+            };
+
+            if (node.op == Operator::MATMUL)
+            {
+                if (!lhsTensor || !rhsTensor ||
+                    !shapeKnown(node.lhs->tensorDims) || !shapeKnown(node.rhs->tensorDims) ||
+                    node.lhs->tensorDims.size() != 2 || node.rhs->tensorDims.size() != 2)
+                {
+                    reportError(node, "'@' requires two 2-D tensors with known shapes");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                Type* le = tensorElementType(lhsType);
+                Type* re = tensorElementType(rhsType);
+                if (!le || !re || le->getBaseType() != re->getBaseType())
+                {
+                    reportError(node, "tensor element types do not match for '@'");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                if (node.lhs->tensorDims[1] != node.rhs->tensorDims[0])
+                {
+                    reportError(node, "tensor shapes are incompatible for '@'");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                setTensorExpr(node, le, {node.lhs->tensorDims[0], node.rhs->tensorDims[1]});
+                return ok;
+            }
+
+            bool arithmetic = node.op == Operator::ADD || node.op == Operator::SUB || node.op == Operator::MUL ||
+                              node.op == Operator::DIV || node.op == Operator::MOD;
+            if (!arithmetic)
+            {
+                reportError(node, "operator '" + toString(node.op) + "' does not support tensor operands");
+                node.attr.val.value.type  = voidType;
+                node.attr.val.isConstexpr = false;
+                return false;
+            }
+
+            Type* elem = lhsTensor ? tensorElementType(lhsType) : tensorElementType(rhsType);
+            if (!elem)
+            {
+                reportError(node, "invalid tensor operand");
+                node.attr.val.value.type  = voidType;
+                node.attr.val.isConstexpr = false;
+                return false;
+            }
+
+            if (lhsTensor && rhsTensor)
+            {
+                Type* le = tensorElementType(lhsType);
+                Type* re = tensorElementType(rhsType);
+                if (!le || !re || le->getBaseType() != re->getBaseType())
+                {
+                    reportError(node, "tensor element types do not match");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                if (!shapeKnown(node.lhs->tensorDims) || !shapeKnown(node.rhs->tensorDims) ||
+                    node.lhs->tensorDims != node.rhs->tensorDims)
+                {
+                    reportError(node, "tensor shapes do not match");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                elem = le;
+            }
+            else
+            {
+                Type* scalarType = lhsTensor ? rhsType : lhsType;
+                if (!isScalarType(scalarType) || scalarType->getBaseType() != elem->getBaseType())
+                {
+                    reportError(node, "tensor and scalar operand types do not match");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+                if (!shapeKnown(lhsTensor ? node.lhs->tensorDims : node.rhs->tensorDims))
+                {
+                    reportError(node, "tensor operand must have a known shape");
+                    node.attr.val.value.type  = voidType;
+                    node.attr.val.isConstexpr = false;
+                    return false;
+                }
+            }
+
+            if (node.op == Operator::MOD && elem->getBaseType() != Type_t::INT &&
+                elem->getBaseType() != Type_t::LL && elem->getBaseType() != Type_t::BOOL)
+            {
+                reportError(node, "'%' requires an integer tensor");
+                node.attr.val.value.type  = voidType;
+                node.attr.val.isConstexpr = false;
+                return false;
+            }
+
+            setTensorExpr(node, elem, lhsTensor ? node.lhs->tensorDims : node.rhs->tensorDims);
+            return ok;
+        }
 
         if (isVoidType(lhsType) || isVoidType(rhsType))
         {
@@ -435,6 +657,44 @@ namespace FE::AST
 
             Type* actualType = arg->attr.val.value.type;
             Type* expectType = param->type;
+
+            if (isTensorType(param->type))
+            {
+                if (!isTensorType(actualType))
+                {
+                    reportError(*arg, "argument is not a tensor but parameter '" +
+                                          param->entry->getName() + "' requires one");
+                    ok = false;
+                    continue;
+                }
+                if (tensorElementType(actualType)->getBaseType() != tensorElementType(param->type)->getBaseType())
+                {
+                    reportError(*arg, "tensor element type does not match parameter '" +
+                                          param->entry->getName() + "'");
+                    ok = false;
+                    continue;
+                }
+                // 参数首维未知，只比较已知的尾部维度
+                const auto& argDims = arg->tensorDims;
+                size_t      tail    = param->dims ? param->dims->size() - 1 : 0;
+                if (!argDims.empty() && argDims.size() >= tail)
+                {
+                    for (size_t k = 0; k < tail; ++k)
+                    {
+                        int expected = (*param->dims)[k + 1]->attr.val.getInt();
+                        int actual   = argDims[argDims.size() - tail + k];
+                        if (actual > 0 && actual != expected)
+                        {
+                            reportError(*arg, "tensor shape does not match parameter '" +
+                                                  param->entry->getName() + "'");
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if (param->dims && !param->dims->empty()) expectType = TypeFactory::getPtrType(param->type);
 
             if (isVoidType(actualType) || isVoidType(expectType))

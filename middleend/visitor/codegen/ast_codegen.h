@@ -10,6 +10,7 @@
 #include <middleend/module/ir_module.h>
 #include <debug.h>
 #include <list>
+#include <functional>
 
 /*
  * Lab 3-2: 中间代码生成 (IR Generation)
@@ -104,6 +105,9 @@ namespace ME
         std::map<size_t, FE::AST::VarAttr>        reg2attr;
         std::map<size_t, bool>                    paramPtrTab;  // if the i-th param is a pointer or not
         std::map<FE::AST::LeftValExpr*, Operand*> lval2ptr;
+        // 张量表达式的值：元素首地址（张量没有单寄存器表示）
+        std::map<FE::AST::ExprNode*, Operand*>    tensorVals;
+        std::map<size_t, bool>                    tensorParamTab;
 
       public:
         ASTCodeGen(const std::map<FE::Sym::Entry*, FE::AST::VarAttr>& glbSymbols,
@@ -152,6 +156,18 @@ namespace ME
         void handleAssign(FE::AST::LeftValExpr& lhs, FE::AST::ExprNode& rhs, Module* m);
         void handleLogicalAnd(FE::AST::BinaryExpr& node, FE::AST::ExprNode& lhs, FE::AST::ExprNode& rhs, Module* m);
         void handleLogicalOr(FE::AST::BinaryExpr& node, FE::AST::ExprNode& lhs, FE::AST::ExprNode& rhs, Module* m);
+
+        // ---- 张量相关 ----
+        bool isTensorNode(FE::AST::ExprNode& node);
+        void emitCountedLoop(size_t count, const std::function<void(size_t)>& body);
+        Operand* tensorElemPtr(Operand* base, DataType elem, size_t total, size_t idxReg, bool parameter);
+        Operand* newTensorTemp(const std::vector<int>& shape, DataType elem);
+        void emitTensorCopy(Operand* dst, bool dstParam, Operand* src, bool srcParam, DataType elem,
+            const std::vector<int>& shape);
+        void handleTensorBinary(FE::AST::BinaryExpr& node, FE::AST::ExprNode& lhs, FE::AST::ExprNode& rhs, Module* m);
+        void handleTensorMatmul(FE::AST::BinaryExpr& node, FE::AST::ExprNode& lhs, FE::AST::ExprNode& rhs, Module* m);
+        void handleTensorUnary(FE::AST::UnaryExpr& node, FE::AST::ExprNode& operand, Module* m);
+        void handleTensorAssign(FE::AST::LeftValExpr& lhs, FE::AST::ExprNode& rhs, Module* m);
 
       private:
         void libFuncRegister(Module* m);

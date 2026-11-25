@@ -204,6 +204,31 @@ namespace FE::AST
         return static_cast<PtrType*>(type)->base;
     }
 
+    bool ASTChecker::isTensorType(Type* type)
+    {
+        return type && type->getTypeGroup() == TypeGroup::TENSOR;
+    }
+
+    Type* ASTChecker::tensorElementType(Type* type)
+    {
+        if (!isTensorType(type)) return nullptr;
+        return static_cast<TensorType*>(type)->elem;
+    }
+
+    bool ASTChecker::sameTensorShape(const std::vector<int>& a, const std::vector<int>& b)
+    {
+        // 空的形状代表“未知”，此时不做形状比较
+        if (a.empty() || b.empty()) return true;
+        return a == b;
+    }
+
+    void ASTChecker::setTensorExpr(ExprNode& node, Type* elem, const std::vector<int>& dims)
+    {
+        node.attr.val.value.type  = TypeFactory::getTensorType(elem);
+        node.attr.val.isConstexpr = false;
+        node.tensorDims           = dims;
+    }
+
     void ASTChecker::libFuncRegister()
     {
         // 示例实现：注册 SysY 标准库函数到 funcDecls 中

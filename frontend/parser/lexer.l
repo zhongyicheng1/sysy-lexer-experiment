@@ -89,6 +89,7 @@ TODO(Lab1)：参考SysY2022的定义，实现更多的词法，如浮点数、�
 "int"               { RETT(INT, loc) }
 "float"             { RETT(FLOAT, loc) }
 "void"              { RETT(VOID, loc) }
+"tensor"            { RETT(TENSOR, loc) }
 
 ";"                 { RETT(SEMICOLON, loc) }
 ","                 { RETT(COMMA, loc) }
@@ -109,6 +110,7 @@ TODO(Lab1)：参考SysY2022的定义，实现更多的词法，如浮点数、�
 "*"                 { RETT(STAR, loc) }
 "/"                 { RETT(SLASH, loc) }
 "%"                 { RETT(MOD, loc) }
+"@"                 { RETT(AT, loc) }
 ">"                 { RETT(GT, loc) }
 "<"                 { RETT(LT, loc) }
 "="                 { RETT(ASSIGN, loc) }

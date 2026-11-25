@@ -9,7 +9,8 @@
 
 #define AST_TYPEGROUP_DECL  \
     X(BASIC, basic type, 0) \
-    X(POINTER, pointer type, 1)
+    X(POINTER, pointer type, 1) \
+    X(TENSOR, tensor type, 2)
 
 #define AST_BASETYPE_DECL                                                           \
     X(UNK, unknown type, 0)                                                         \
@@ -37,7 +38,8 @@
     X(BITAND, &, 14)            \
     X(AND, &&, 15)              \
     X(OR, ||, 16)               \
-    X(ASSIGN, =, 17)
+    X(ASSIGN, =, 17)            \
+    X(MATMUL, matmul, 18)
 
 namespace FE::AST
 {
@@ -110,11 +112,26 @@ namespace FE::AST
         PtrType(Type* t = nullptr) : base(t) {}
     };
 
+    // 张量类型：元素类型为 int 或 float，形状由声明处的维度列表另行记录
+    struct TensorType : public Type
+    {
+        friend class TypeFactory;
+
+        Type*       elem;
+        std::string toString() const override { return "tensor " + (elem ? elem->toString() : std::string("unknown")); }
+        Type_t      getBaseType() const override { return elem ? elem->getBaseType() : Type_t::UNK; }
+        TypeGroup   getTypeGroup() const override { return TypeGroup::TENSOR; }
+
+      private:
+        TensorType(Type* t = nullptr) : elem(t) {}
+    };
+
     class TypeFactory
     {
       public:
         static Type* getBasicType(Type_t t = Type_t::UNK);
         static Type* getPtrType(Type* t = nullptr);
+        static Type* getTensorType(Type* elem = nullptr);
 
         static TypeFactory& getInstance()
         {
@@ -131,6 +148,7 @@ namespace FE::AST
         using PtrBase_t = Type*;
         using PtrType_t = Type*;
         static std::map<PtrBase_t, PtrType_t> ptrTypeMap;
+        static std::map<PtrBase_t, PtrType_t> tensorTypeMap;
     };
 
     extern Type* voidType;
@@ -237,10 +255,16 @@ namespace FE::AST
 
         std::vector<int>      arrayDims;
         std::vector<VarValue> initList;
+        bool                  isTensor;
+        bool                  isTensorParam;
 
-        VarAttr() : isConstDecl(false), type(voidType), scopeLevel(-1), arrayDims(), initList() {}
+        VarAttr()
+            : isConstDecl(false), type(voidType), scopeLevel(-1), arrayDims(), initList(), isTensor(false),
+              isTensorParam(false)
+        {}
         VarAttr(Type* t, bool isConst = false, int level = -1)
-            : isConstDecl(isConst), type(t), scopeLevel(level), arrayDims(), initList()
+            : isConstDecl(isConst), type(t), scopeLevel(level), arrayDims(), initList(), isTensor(false),
+              isTensorParam(false)
         {}
     };
 

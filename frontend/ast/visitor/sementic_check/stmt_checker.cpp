@@ -34,6 +34,21 @@ namespace FE::AST
             return false;
         }
 
+        if (isTensorType(expected))
+        {
+            if (!isTensorType(actual))
+            {
+                reportError(node, "return value is not a tensor");
+                return false;
+            }
+            if (tensorElementType(actual)->getBaseType() != tensorElementType(expected)->getBaseType())
+            {
+                reportError(node, "tensor element type does not match the function return type");
+                return false;
+            }
+            return true;
+        }
+
         if (isPointerType(expected))
         {
             if (!isPointerType(actual) || pointerElementType(actual) != pointerElementType(expected))
